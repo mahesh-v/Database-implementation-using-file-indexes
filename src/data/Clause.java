@@ -25,6 +25,9 @@ public class Clause {
 		if(cl.contains("<"))
 			this.lesserThan = true;
 		String clauseVal = getClauseValue(cl);
+		clauseVal = clauseVal.trim();
+		if(clauseVal.startsWith("\"")&& clauseVal.endsWith("\""))
+			clauseVal = clauseVal.substring(1, clauseVal.length()-1);
 		try{
 			flt_val = Float.parseFloat(clauseVal);
 		} catch(NumberFormatException nfe){
@@ -34,9 +37,9 @@ public class Clause {
 	
 	private String getClauseValue(String clause) {
 		char[] c = clause.trim().toCharArray();
-		for (int i = c.length; i >=0; i--) {
-			if(c[i] == ' '||c[i] == '>'||c[i] == '<'||c[i] == '='||c[i] == '!')
-				return clause.substring(i+1, c.length);
+		for (int i = c.length-1; i >=0; i--) {
+			if(c[i] == '>'||c[i] == '<'||c[i] == '='||c[i] == '!')
+				return clause.trim().substring(i+1, c.length);
 		}
 		return null;
 	}

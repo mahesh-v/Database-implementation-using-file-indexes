@@ -34,7 +34,7 @@ public class CLIController {
 			String line="";
 			while((ip=br.readLine())!=null){
 				line=line+ip;
-				if(ip.contains(";")||ip.contains("quit"))
+				if(ip.contains(";")||ip.contains("quit")||ip.contains("exit"))
 					break;
 				else
 					line = line+" ";
@@ -80,8 +80,37 @@ public class CLIController {
 		writeIndexMapsToFiles(db);
 	}
 
-	private void evaluateDelete(String line) {
-		//TODO 
+	private void evaluateDelete(String command) {
+		if(!command.contains(" from ")||!command.contains(" where ")){
+			System.out.println("Invalid delete syntax");
+			return;
+		}
+		String dbname = command.substring(command.indexOf(" from ")+6, command.indexOf(" where "));
+		String clause = command.substring(command.indexOf(" where ")+7, command.indexOf(";"));
+		Database db = getDatabase(dbname);
+		if(db==null){
+			System.out.println("No such database exists.");
+			return;
+		}
+		Map<Float, ArrayList<Long>> locationMap = evaluateClauseAndGetMap(db, clause);
+		try (RandomAccessFile raf = new RandomAccessFile(db.getDbName()+BINARY_EXTENSION, "rw")){
+			for (Float id : locationMap.keySet()) {
+				ArrayList<Long> memLocations = locationMap.get(id);
+				for (Long loc : memLocations) {
+					raf.seek(loc);
+					raf.skipBytes(4);//for int id
+					byte compLength = raf.readByte();
+					raf.skipBytes(compLength+16);//length of company+6drug_id+(2*3 short)+(4float)
+					long location = raf.getFilePointer();
+					byte lastByte = raf.readByte();
+					byte newByte = (byte) (lastByte | (1L<<7));
+					raf.seek(location);
+					raf.writeByte(newByte);
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 		
 	}
 
@@ -94,16 +123,8 @@ public class CLIController {
 			clause = dbname.substring(dbname.indexOf(" where ")+7);
 			dbname = dbname.substring(0, dbname.indexOf(" where ")).trim();
 		}
-		if(clause!=null)
-			System.out.println("Executing: SELECT "+select+" FROM "+dbname+" WHERE "+clause+";");
-		else
-			System.out.println("Executing: SELECT "+select+" FROM "+dbname+";");
 		String[] items = select.split(",");
-		Database db = null;
-		for (Database database : dbList) {
-			if(database.getDbName().equalsIgnoreCase(dbname))
-				db = database;
-		}
+		Database db = getDatabase(dbname);
 		if(db==null){
 			System.out.println("No such database exists.");
 			return;
@@ -111,27 +132,16 @@ public class CLIController {
 		boolean star = false;
 		if(select.equals("*"))
 			star=true;
-		if(clause!=null){
-			
-//			Pattern p = Pattern.compile(">=|<=|=|>|<");
-//			Matcher m = p.matcher(clause);
-//			String operand = null;
-//			if(m.matches())
-//				operand = m.group();
-//			if(operand == null){
-//				System.out.println("Invalid WHERE clause. Please use a valid operand");
-//				return;
-//			}
-//			String[] operands = clause.split(">=|<=|=|>|<");
+		Map<Float, ArrayList<Long>> locationMap=null;
+		if(clause!=null)
+			locationMap =  evaluateClauseAndGetMap(db, clause);
+		else
+			locationMap = db.getIdMap();
+		if(locationMap==null){
+			System.out.println("Unable to evaluate WHERE clause.");
+			return;
 		}
 		try (RandomAccessFile raf = new RandomAccessFile(db.getDbName()+BINARY_EXTENSION, "r")){
-			
-//			TreeMap<Float, ArrayList<Long>> locationMap =  db.getIdMap();
-			Map<Float, ArrayList<Long>> locationMap =  evaluateClauseAndGetMap(db, clause);
-			if(locationMap==null){
-				System.out.println("Unable to evaluate WHERE clause.");
-				return;
-			}
 				
 			displayRecord(items, star, "id",
 					"company", "drug_id",
@@ -140,49 +150,36 @@ public class CLIController {
 					"double_blind", "controlled_study",
 					"govt_funded", "fda_approved");
 			for (Float id : locationMap.keySet()) {
-				Boolean ignore = true;
-//				if(clause!= null){
+				ArrayList<Long> memLocations = locationMap.get(id);
+				for (Long loc : memLocations) {
+					raf.seek(loc);
+					int id_display = raf.readInt();
+					byte compLength = raf.readByte();
+					byte[] b = new byte[compLength];
+					raf.read(b);
+					String companyName_display = new String(b, ENCODING);
+					byte[] b2 = new byte[6];
+					raf.read(b2);
+					String drug_id_display = new String(b2, ENCODING);
+					short trials_display = raf.readShort();
+					short patients_display = raf.readShort();
+					short dosage_mg_display = raf.readShort();
+					float reading_display = raf.readFloat();
+					byte lastByte = raf.readByte();
+					boolean deleted = (lastByte&(1L<<7))==128;
+					boolean double_blind = (lastByte&(1L<<3))==8;
+					boolean controlled_study = (lastByte&(1L<<2))==4;
+					boolean govt_funded = (lastByte&(1L<<1))==2;
+					boolean fda_approved = (lastByte&(1L))==1;
 					
-//					ScriptEngineManager seManager = new ScriptEngineManager();
-//					ScriptEngine se = seManager.getEngineByName("JavaScript");
-//					String clauseVariable = getClauseVariable(clause);
-//					se.eval(clauseVariable+" = "+id);
-//					clause = formatClause(clause);
-//					ignore = (Boolean) se.eval(clause);
-//				}
-				if(ignore){
-					ArrayList<Long> memLocations = locationMap.get(id);
-					for (Long loc : memLocations) {
-						raf.seek(loc);
-						int id_display = raf.readInt();
-						byte compLength = raf.readByte();
-						byte[] b = new byte[compLength];
-						raf.read(b);
-						String companyName_display = new String(b, ENCODING);
-						byte[] b2 = new byte[6];
-						raf.read(b2);
-						String drug_id_display = new String(b2, ENCODING);
-						short trials_display = raf.readShort();
-						short patients_display = raf.readShort();
-						short dosage_mg_display = raf.readShort();
-						float reading_display = raf.readFloat();
-						byte lastByte = raf.readByte();
-						boolean deleted = (lastByte&(1L<<7))==128;
-						boolean double_blind = (lastByte&(1L<<3))==8;
-						boolean controlled_study = (lastByte&(1L<<2))==4;
-						boolean govt_funded = (lastByte&(1L<<1))==2;
-						boolean fda_approved = (lastByte&(1L))==1;
-						
-						if(!deleted)
-						{
-							displayRecord(items, star, id_display+"",
-									companyName_display, drug_id_display,
-									trials_display+"", patients_display+"",
-									dosage_mg_display+"", reading_display+"",
-									double_blind+"", controlled_study+"",
-									govt_funded+"", fda_approved+"");
-							System.out.println();
-						}
+					if(!deleted)
+					{
+						displayRecord(items, star, id_display+"",
+								companyName_display, drug_id_display,
+								trials_display+"", patients_display+"",
+								dosage_mg_display+"", reading_display+"",
+								double_blind+"", controlled_study+"",
+								govt_funded+"", fda_approved+"");
 					}
 				}
 			}
@@ -219,51 +216,50 @@ public class CLIController {
 			System.out.print(govt_funded+"|");
 		if(star || isContained("fda_approved", items))
 			System.out.print(fda_approved+"|");
+		System.out.println();
 	}
-
-//	private String formatClause(String clause) {
-//		if(clause.contains("=")&&!(clause.contains(">")||clause.contains("<")||clause.contains("!")||clause.contains("==")))
-//			clause = clause.replace("=", "==");
-//		return clause;
-//	}
-//
-//	private String getClauseVariable(String clause) {
-//		char[] c = clause.toCharArray();
-//		for (int i = 0; i < c.length; i++) {
-//			if(c[i] == ' '||c[i] == '>'||c[i] == '<'||c[i] == '=')
-//				return clause.substring(0, i);
-//		}
-//		return null;
-//	}
 
 	private Map<Float, ArrayList<Long>> evaluateClauseAndGetMap( Database db, String clause) 
 	{
 		Clause c = new Clause(clause);
 		TreeMap<Float, ArrayList<Long>> map = getMapBasedOnClause(c.clauseVariable, db);
+		if(map==null)
+			return null;
 		if(c.str_val == null){
 			if(c.equalTo){
 				if(c.greaterThan)
 					return map.tailMap(c.flt_val, true);
-				if(c.lesserThan)
+				else if(c.lesserThan)
 					return map.headMap(c.flt_val, true);
-				if(c.not){
+				else if(c.not){
 					TreeMap<Float, ArrayList<Long>> not_map = new TreeMap<Float, ArrayList<Long>>();
 					not_map.putAll(map);
 					not_map.remove(c.flt_val);
 					return not_map;
+				}
+				else{
+					TreeMap<Float, ArrayList<Long>> equalTo_map = new TreeMap<Float, ArrayList<Long>>();
+					ArrayList<Long> value = map.get(c.flt_val);
+					if(value!=null)
+						equalTo_map.put(c.flt_val, value);
+					return equalTo_map;
 				}
 			}
 			if(c.greaterThan){
 				return map.tailMap(c.flt_val, false);
 			}
 			if(c.lesserThan){
-				map.headMap(c.flt_val, false);
+				return map.headMap(c.flt_val, false);
 			}
 		}
 		else{//for company, drug id, and all boolean values
 			float hashcode = c.str_val.hashCode();
 			if(c.equalTo&&!c.not){//equal to
-				return map.subMap(hashcode, true, hashcode, true);
+				TreeMap<Float, ArrayList<Long>> equalTo_map = new TreeMap<Float, ArrayList<Long>>();
+				ArrayList<Long> value = map.get(hashcode);
+				if(value!=null)
+					equalTo_map.put(hashcode, value);
+				return equalTo_map;
 			}
 			if(c.equalTo&&c.not){//not equal to
 				TreeMap<Float, ArrayList<Long>> not_map = new TreeMap<Float, ArrayList<Long>>();
@@ -301,7 +297,7 @@ public class CLIController {
 			return db.getFda_approvedMap();
 		else
 			return null;
-}
+	}
 
 	private boolean isContained(String attribute, String[] items) {
 		for (String item : items) {
@@ -347,9 +343,10 @@ public class CLIController {
 		}
 		//id
 		int id = Integer.parseInt(split[0]);
-		if(!db.getIdMap().containsKey((float)id))
-			db.getIdMap().put((float) id, new ArrayList<Long>());
-		db.getIdMap().get((float)id).add(location);
+		Float id_key = new Float(split[0]);
+		if(!db.getIdMap().containsKey(id_key))
+			db.getIdMap().put(id_key, new ArrayList<Long>());
+		db.getIdMap().get(id_key).add(location);
 		
 		dos.writeInt(id);
 		dos.flush();
@@ -363,7 +360,7 @@ public class CLIController {
 		dos.flush();
 		dos.writeBytes(companyName);
 		dos.flush();
-		float cmpHash = companyName.hashCode();
+		float cmpHash = companyName.toLowerCase().hashCode();
 		if(!db.getCompanyMap().containsKey(cmpHash))
 			db.getCompanyMap().put(cmpHash, new ArrayList<Long>());
 		db.getCompanyMap().get(cmpHash).add(location);
@@ -372,7 +369,7 @@ public class CLIController {
 		//drug_id
 		dos.writeBytes(split[2]);
 		dos.flush();
-		float drugidHash = split[2].hashCode();
+		float drugidHash = split[2].toLowerCase().hashCode();
 		if(!db.getDrugIdMap().containsKey(drugidHash))
 			db.getDrugIdMap().put(drugidHash, new ArrayList<Long>());
 		db.getDrugIdMap().get(drugidHash).add(location);
@@ -412,28 +409,28 @@ public class CLIController {
 		byte lastbyte = 0;
 		if(split[7].equals("true"))//double_blind
 			lastbyte = (byte) (lastbyte | 0x08);
-		float dbl_blndHash = split[7].hashCode();
+		float dbl_blndHash = split[7].toLowerCase().hashCode();
 		if(!db.getDoubleBlindMap().containsKey(dbl_blndHash))
 			db.getDoubleBlindMap().put(dbl_blndHash, new ArrayList<Long>());
 		db.getDoubleBlindMap().get(dbl_blndHash).add(location);
 			
 		if(split[8].equals("true"))//controlled_study
 			lastbyte = (byte) (lastbyte | 0x04);
-		float controlled_studyHash = split[8].hashCode();
+		float controlled_studyHash = split[8].toLowerCase().hashCode();
 		if(!db.getDoubleBlindMap().containsKey(controlled_studyHash))
 			db.getDoubleBlindMap().put(controlled_studyHash, new ArrayList<Long>());
 		db.getDoubleBlindMap().get(controlled_studyHash).add(location);
 		
 		if(split[9].equals("true"))//govt_funded
 			lastbyte = (byte) (lastbyte | 0x02);
-		float govt_fundedHash = split[9].hashCode();
+		float govt_fundedHash = split[9].toLowerCase().hashCode();
 		if(!db.getGovt_fundedMap().containsKey(govt_fundedHash))
 			db.getGovt_fundedMap().put(govt_fundedHash, new ArrayList<Long>());
 		db.getGovt_fundedMap().get(govt_fundedHash).add(location);
 		
 		if(split[10].equals("true"))//fda_approved
 			lastbyte = (byte) (lastbyte | 0x01);
-		float fda_approvedHash = split[10].hashCode();
+		float fda_approvedHash = split[10].toLowerCase().hashCode();
 		if(!db.getFda_approvedMap().containsKey(fda_approvedHash))
 			db.getFda_approvedMap().put(fda_approvedHash, new ArrayList<Long>());
 		db.getFda_approvedMap().get(fda_approvedHash).add(location);
@@ -520,8 +517,10 @@ public class CLIController {
 		if(idIndex.exists()){
 			try(ObjectInputStream ois = new ObjectInputStream(new FileInputStream(idIndex))) {
 				Object obj = ois.readObject();
-				if(obj instanceof TreeMap<?,?>)
-					db.setIdMap((TreeMap<Float, ArrayList<Long>>)obj);
+				if(obj instanceof TreeMap<?,?>) {
+					TreeMap<Float, ArrayList<Long>> idMap = (TreeMap<Float, ArrayList<Long>>)obj;
+					db.setIdMap(idMap);
+				}
 			} catch (IOException | ClassNotFoundException e) {
 				e.printStackTrace();
 			} 
@@ -531,7 +530,7 @@ public class CLIController {
 			try(ObjectInputStream ois = new ObjectInputStream(new FileInputStream(companyIndex))) {
 				Object obj = ois.readObject();
 				if(obj instanceof TreeMap<?,?>)
-					db.setIdMap((TreeMap<Float, ArrayList<Long>>)obj);
+					db.setCompanyMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
 				e.printStackTrace();
 			} 
@@ -541,7 +540,7 @@ public class CLIController {
 			try(ObjectInputStream ois = new ObjectInputStream(new FileInputStream(drug_idIndex))) {
 				Object obj = ois.readObject();
 				if(obj instanceof TreeMap<?,?>)
-					db.setCompanyMap((TreeMap<Float, ArrayList<Long>>)obj);
+					db.setDrugIdMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
 				e.printStackTrace();
 			} 
