@@ -1,6 +1,6 @@
 package data;
 
-public class Clause {
+public class WhereClause {
 	public String clauseVariable;
 	public boolean equalTo;
 	public boolean not;
@@ -10,8 +10,8 @@ public class Clause {
 	public float flt_val;
 	public String valType;
 	
-	public Clause(String cl) {
-		evaluateClause(cl);
+	public WhereClause(String clause) {
+		evaluateClause(clause);
 	}
 
 	private void evaluateClause(String cl) {

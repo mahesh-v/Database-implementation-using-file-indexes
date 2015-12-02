@@ -3,7 +3,7 @@ package data;
 import java.util.ArrayList;
 import java.util.TreeMap;
 
-public class Database {
+public class PharmaDatabase {
 	private String dbName;
 	private TreeMap<Float, ArrayList<Long>> idMap = new TreeMap<Float, ArrayList<Long>>();
 	private TreeMap<Float, ArrayList<Long>> companyMap = new TreeMap<Float, ArrayList<Long>>();

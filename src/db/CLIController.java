@@ -16,20 +16,21 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.TreeMap;
 
-import data.Clause;
-import data.Database;
+import data.WhereClause;
+import data.PharmaDatabase;
 
 public class CLIController {
+	private static final String PROMPT_STRING = "MXV142030_prompt> ";
 	private static final String ENCODING = "UTF-8";
-	private static final String BINARY_EXTENSION = ".bin";
+	private static final String BINARY_EXTENSION = ".db";
 	boolean shutDown;
-	private static final ArrayList<Database> dbList = new ArrayList<Database>();
+	private static ArrayList<PharmaDatabase> dbList = new ArrayList<PharmaDatabase>();
 	
 	public void startCLI() throws IOException {
 		loadExistingDatabases();
 		BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
 		while(!shutDown){
-			System.out.print("prompt> ");
+			System.out.print(PROMPT_STRING);
 			String ip = null;
 			String line="";
 			while((ip=br.readLine())!=null){
@@ -38,59 +39,75 @@ public class CLIController {
 					break;
 				else
 					line = line+" ";
-				System.out.print("prompt> ");
+				System.out.print(PROMPT_STRING);
 			}
 			line = formatLine(line);
 			if(line.startsWith("quit")||line.startsWith("exit")){
 				shutDown = true;
 			}
 			else if(line.startsWith("select")){
+				long nano = System.nanoTime();
 				System.out.println("Evaluating SELECT query");
-				evaluateSelect(line);
+				if(evaluateSelect(line))
+					System.out.println("Command executed in "+((System.nanoTime() - nano)/1E6)+"ms");
 			}
 			else if(line.startsWith("import")){
+				long nano = System.nanoTime();
 				System.out.println("Evaluating IMPORT query");
-				evaluateImport(line);
+				if(evaluateImport(line))
+					System.out.println("Command executed in "+((System.nanoTime() - nano)/1E6)+"ms");
 			}
 			else if(line.startsWith("delete")){
+				long nano = System.nanoTime();
 				System.out.println("Evaluating DELETE query");
-				evaluateDelete(line);
+				if(evaluateDelete(line))
+					System.out.println("Command executed in "+((System.nanoTime() - nano)/1E6)+"ms");
 			}
 			else if(line.startsWith("insert")){
+				long nano = System.nanoTime();
 				System.out.println("Evaluating INSERT query");
-				evaluateInsert(line);
+				if(evaluateInsert(line))
+					System.out.println("Command executed in "+((System.nanoTime() - nano)/1E6)+"ms");
 			}
 		}
 	}
 
-	private void evaluateInsert(String command) {
-		String dbName = command.substring(command.indexOf(" into ")+6, command.indexOf("values")).trim();
-		Database db = getDatabase(dbName);
+	private boolean evaluateInsert(String command) {
+		if(!command.contains(" into ")||!command.contains(" values ")){
+			System.out.println("Invalid insert syntax");
+			System.out.println("Please enter in format: INSERT INTO <dbname> VALUES (<comma seperated values>);");
+			return false;
+		}
+		String dbName = command.substring(command.indexOf(" into ")+6, command.indexOf(" values ")).trim();
+		PharmaDatabase db = getDatabase(dbName);
 		if(db==null){
 			System.out.println("No such database found. Unable to complete insert operation.");
-			return;
+			return false;
 		}
 		String values_cs = command.substring(command.indexOf("(")+1, command.indexOf(")"));
 		File dbFile = new File(db.getDbName()+BINARY_EXTENSION);
 		try(DataOutputStream dos = new DataOutputStream(new FileOutputStream(dbFile, true))){
 			writeLineToDbAndFile(db, values_cs, dos, dbFile.length());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("IOException while writing to Database: "+e.getMessage());
+			return false;
 		}
 		writeIndexMapsToFiles(db);
+		return true;
 	}
 
-	private void evaluateDelete(String command) {
+	private boolean evaluateDelete(String command) {
 		if(!command.contains(" from ")||!command.contains(" where ")){
 			System.out.println("Invalid delete syntax");
-			return;
+			System.out.println("Please enter in format: DELETE FROM <dbname> WHERE <condition>;");
+			return false;
 		}
 		String dbname = command.substring(command.indexOf(" from ")+6, command.indexOf(" where "));
 		String clause = command.substring(command.indexOf(" where ")+7, command.indexOf(";"));
-		Database db = getDatabase(dbname);
+		PharmaDatabase db = getDatabase(dbname);
 		if(db==null){
 			System.out.println("No such database exists.");
-			return;
+			return false;
 		}
 		Map<Float, ArrayList<Long>> locationMap = evaluateClauseAndGetMap(db, clause);
 		try (RandomAccessFile raf = new RandomAccessFile(db.getDbName()+BINARY_EXTENSION, "rw")){
@@ -109,12 +126,18 @@ public class CLIController {
 				}
 			}
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("IOException while deleting record from database: "+e.getMessage());
+			return false;
 		}
-		
+		return true;
 	}
 
-	private void evaluateSelect(String command) {
+	private boolean evaluateSelect(String command) {
+		if(!command.contains(" from ")){
+			System.out.println("Incorrect select syntax.");
+			System.out.println("Please enter in format: SELECT <identifiers> FROM <dbname> [WHERE <condition>];");
+			return false;
+		}
 		String select = command.substring(command.indexOf("select")+6, command.indexOf(" from ")).trim();
 		
 		String dbname = command.substring(command.indexOf(" from ")+6, command.indexOf(";")).trim();
@@ -124,10 +147,10 @@ public class CLIController {
 			dbname = dbname.substring(0, dbname.indexOf(" where ")).trim();
 		}
 		String[] items = select.split(",");
-		Database db = getDatabase(dbname);
+		PharmaDatabase db = getDatabase(dbname);
 		if(db==null){
 			System.out.println("No such database exists.");
-			return;
+			return false;
 		}
 		boolean star = false;
 		if(select.equals("*"))
@@ -139,7 +162,7 @@ public class CLIController {
 			locationMap = db.getIdMap();
 		if(locationMap==null){
 			System.out.println("Unable to evaluate WHERE clause.");
-			return;
+			return false;
 		}
 		try (RandomAccessFile raf = new RandomAccessFile(db.getDbName()+BINARY_EXTENSION, "r")){
 				
@@ -149,6 +172,7 @@ public class CLIController {
 					"dosage_mg", "reading",
 					"double_blind", "controlled_study",
 					"govt_funded", "fda_approved");
+			int numDisplayed = 0;
 			for (Float id : locationMap.keySet()) {
 				ArrayList<Long> memLocations = locationMap.get(id);
 				for (Long loc : memLocations) {
@@ -180,12 +204,78 @@ public class CLIController {
 								dosage_mg_display+"", reading_display+"",
 								double_blind+"", controlled_study+"",
 								govt_funded+"", fda_approved+"");
+						numDisplayed++;
 					}
 				}
 			}
+			if(numDisplayed == 0)
+				System.out.println("No records found for given select condition.");
+			else
+				System.out.println("Displaying "+numDisplayed+" records.");
+			
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("IOException when reading from database: "+e.getMessage());
+			return false;
 		}
+		return true;
+	}
+	
+	private boolean evaluateImport(String command) {
+		String fileName = command.substring(command.indexOf("import")+6, command.indexOf(";")).trim();
+		String fullPath = fileName;
+		if(fileName.contains(File.separator))
+			fileName = fileName.substring(fileName.lastIndexOf(File.separator)+1);
+		String alias=null;
+		if(fileName.contains(" as ")){
+			alias = fileName.substring(fileName.indexOf(" as ")+4).trim();
+			fullPath = fullPath.substring(0, fullPath.indexOf(" as ")).trim();
+		}
+		if(fileName.startsWith("\""))
+			fileName = fileName.substring(1, fileName.length()-1);
+		if(fileName.endsWith("\""))
+			fileName = fileName.substring(0, fileName.length()-1);
+		if(alias ==null){
+			if(fileName.contains("."))
+				alias = fileName.substring(0, fileName.lastIndexOf("."));
+			else
+				alias = fileName;
+		}
+		if(fullPath.startsWith("\""))
+			fullPath = fullPath.substring(1, fullPath.length()-1);
+		if(fullPath.endsWith("\""))
+			fullPath = fullPath.substring(0, fullPath.length()-1);
+		fullPath = fullPath.trim();
+		
+		System.out.println("Importing from file: "+fullPath);
+		PharmaDatabase db = getDatabase(alias);
+		if(db!=null){
+			System.out.println("Database already exists with that name. Please use a different file, or alias \"as\" to name it.");
+			return false;
+		}
+		else
+			db = new PharmaDatabase();
+		db.setDbName(alias);
+		File file = new File(fullPath);
+		int lines = 0;
+		String line="";
+		try (BufferedReader br = new BufferedReader(new FileReader(file)); 
+				DataOutputStream dos = new DataOutputStream(new FileOutputStream(alias+BINARY_EXTENSION))) {
+			while((line = br.readLine())!=null){
+				lines++;
+				
+				if(lines ==1){
+					continue;
+				}
+				writeLineToDbAndFile(db, line, dos, dos.size());
+			}
+			System.out.println("Number of records imported = "+(lines-1));
+		} catch (IOException e) {
+			System.err.println("IOException when writing to database: "+e.getMessage());
+			return false;
+		}
+		writeIndexMapsToFiles(db);
+		dbList.add(db);
+		return true;
 	}
 
 	private void displayRecord(String[] items, boolean star, String id_display,
@@ -219,9 +309,9 @@ public class CLIController {
 		System.out.println();
 	}
 
-	private Map<Float, ArrayList<Long>> evaluateClauseAndGetMap( Database db, String clause) 
+	private Map<Float, ArrayList<Long>> evaluateClauseAndGetMap( PharmaDatabase db, String clause) 
 	{
-		Clause c = new Clause(clause);
+		WhereClause c = new WhereClause(clause);
 		TreeMap<Float, ArrayList<Long>> map = getMapBasedOnClause(c.clauseVariable, db);
 		if(map==null)
 			return null;
@@ -271,29 +361,29 @@ public class CLIController {
 		return null;
 	}
 
-	private TreeMap<Float, ArrayList<Long>> getMapBasedOnClause(String clauseVariable, Database db) 
+	private TreeMap<Float, ArrayList<Long>> getMapBasedOnClause(String clauseVariable, PharmaDatabase db) 
 	{
-		if(clauseVariable.equals("id"))
+		if(clauseVariable.equalsIgnoreCase("id"))
 			return db.getIdMap();
-		else if(clauseVariable.equals("company"))
+		else if(clauseVariable.equalsIgnoreCase("company"))
 			return db.getCompanyMap();
-		else if(clauseVariable.equals("drug_id"))
+		else if(clauseVariable.equalsIgnoreCase("drug_id"))
 			return db.getDrugIdMap();
-		else if(clauseVariable.equals("trials"))
+		else if(clauseVariable.equalsIgnoreCase("trials"))
 			return db.getTrialsMap();
-		else if(clauseVariable.equals("patients"))
+		else if(clauseVariable.equalsIgnoreCase("patients"))
 			return db.getPatientsMap();
-		else if(clauseVariable.equals("dosage_mg"))
+		else if(clauseVariable.equalsIgnoreCase("dosage_mg"))
 			return db.getDosageMap();
-		else if(clauseVariable.equals("reading"))
+		else if(clauseVariable.equalsIgnoreCase("reading"))
 			return db.getReadingMap();
 		else if(clauseVariable.equalsIgnoreCase("double_blind"))
 			return db.getDoubleBlindMap();
-		else if(clauseVariable.equals("controlled_study"))
+		else if(clauseVariable.equalsIgnoreCase("controlled_study"))
 			return db.getControlledStudyMap();
-		else if(clauseVariable.equals("govt_funded"))
+		else if(clauseVariable.equalsIgnoreCase("govt_funded"))
 			return db.getGovt_fundedMap();
-		else if(clauseVariable.equals("fda_approved"))
+		else if(clauseVariable.equalsIgnoreCase("fda_approved"))
 			return db.getFda_approvedMap();
 		else
 			return null;
@@ -307,36 +397,9 @@ public class CLIController {
 		return false;
 	}
 
-	private void evaluateImport(String command) {
-		String fileName = command.substring(command.indexOf("import")+6, command.indexOf(";")).trim();
-		System.out.println("Importing from file: "+fileName);
-		String fn=fileName;
-		if(fileName.contains("."))
-			fn = fileName.substring(0, fileName.lastIndexOf("."));
-		Database db = new Database();
-		db.setDbName(fn);
-		File file = new File("PHARMA_TRIALS_1000B.csv");
-		int lines = 0;
-		String line="";
-		try (BufferedReader br = new BufferedReader(new FileReader(file)); 
-				DataOutputStream dos = new DataOutputStream(new FileOutputStream(fn+BINARY_EXTENSION))) {
-			while((line = br.readLine())!=null){
-				lines++;
-				
-				if(lines ==1){
-					continue;
-				}
-				writeLineToDbAndFile(db, line, dos, dos.size());
-			}
-			System.out.println("Number of records imported = "+(lines-1));
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		writeIndexMapsToFiles(db);
-		dbList.add(db);
-	}
 	
-	private void writeLineToDbAndFile(Database db, String line, DataOutputStream dos, long location) throws IOException{
+	
+	private void writeLineToDbAndFile(PharmaDatabase db, String line, DataOutputStream dos, long location) throws IOException{
 		String[] split = line.split(",(?=([^\"]*\"[^\"]*\")*[^\"]*$)");
 		for (int i = 0; i < split.length; i++) {
 			split[i] = split[i].trim();
@@ -346,6 +409,11 @@ public class CLIController {
 		Float id_key = new Float(split[0]);
 		if(!db.getIdMap().containsKey(id_key))
 			db.getIdMap().put(id_key, new ArrayList<Long>());
+		else{
+			System.out.println("Unable to insert record: "+line);
+			System.out.println("Duplicate primary key id="+id);
+			return;
+		}
 		db.getIdMap().get(id_key).add(location);
 		
 		dos.writeInt(id);
@@ -417,9 +485,9 @@ public class CLIController {
 		if(split[8].equals("true"))//controlled_study
 			lastbyte = (byte) (lastbyte | 0x04);
 		float controlled_studyHash = split[8].toLowerCase().hashCode();
-		if(!db.getDoubleBlindMap().containsKey(controlled_studyHash))
-			db.getDoubleBlindMap().put(controlled_studyHash, new ArrayList<Long>());
-		db.getDoubleBlindMap().get(controlled_studyHash).add(location);
+		if(!db.getControlledStudyMap().containsKey(controlled_studyHash))
+			db.getControlledStudyMap().put(controlled_studyHash, new ArrayList<Long>());
+		db.getControlledStudyMap().get(controlled_studyHash).add(location);
 		
 		if(split[9].equals("true"))//govt_funded
 			lastbyte = (byte) (lastbyte | 0x02);
@@ -439,62 +507,62 @@ public class CLIController {
 		dos.flush();
 	}
 
-	private void writeIndexMapsToFiles(Database db) {
+	private void writeIndexMapsToFiles(PharmaDatabase db) {
 		String fn = db.getDbName();
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".id.ndx"))){
 			oos.writeObject(db.getIdMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing ID index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".company.ndx"))){
 			oos.writeObject(db.getCompanyMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing company index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".drug_id.ndx"))){
 			oos.writeObject(db.getDrugIdMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing drug_id index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".trials.ndx"))){
 			oos.writeObject(db.getTrialsMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing trials index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".patients.ndx"))){
 			oos.writeObject(db.getPatientsMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing patients index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".dosage_mg.ndx"))){
 			oos.writeObject(db.getDosageMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing dosage_mg index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".reading.ndx"))){
 			oos.writeObject(db.getReadingMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing reading index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".double_blind.ndx"))){
 			oos.writeObject(db.getDoubleBlindMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing double_blind index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".controlled_study.ndx"))){
 			oos.writeObject(db.getControlledStudyMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing controlled_study index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".govt_funded.ndx"))){
 			oos.writeObject(db.getGovt_fundedMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing govt_funded index file: "+e.getMessage());
 		}
 		try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fn+".fda_approved.ndx"))){
 			oos.writeObject(db.getFda_approvedMap());
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("Error while writing fda_approved index file: "+e.getMessage());
 		}
 	}
 
@@ -503,7 +571,7 @@ public class CLIController {
 		if(files==null)
 			return;
 		for (File file : files) {
-			Database db = new Database();
+			PharmaDatabase db = new PharmaDatabase();
 			String dbName = file.getName().substring(0, file.getName().indexOf(BINARY_EXTENSION));
 			db.setDbName(dbName);
 			loadCorrespondingIndexFiles(db);
@@ -512,7 +580,7 @@ public class CLIController {
 	}
 	
 	@SuppressWarnings("unchecked")
-	private void loadCorrespondingIndexFiles(Database db) {
+	private void loadCorrespondingIndexFiles(PharmaDatabase db) {
 		File idIndex = new File(db.getDbName()+".id.ndx");
 		if(idIndex.exists()){
 			try(ObjectInputStream ois = new ObjectInputStream(new FileInputStream(idIndex))) {
@@ -522,7 +590,7 @@ public class CLIController {
 					db.setIdMap(idMap);
 				}
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading ID index file: "+e.getMessage());
 			} 
 		}
 		File companyIndex = new File(db.getDbName()+".company.ndx");
@@ -532,7 +600,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setCompanyMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading company index file: "+e.getMessage());
 			} 
 		}
 		File drug_idIndex = new File(db.getDbName()+".drug_id.ndx");
@@ -542,7 +610,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setDrugIdMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading drug_id index file: "+e.getMessage());
 			} 
 		}
 		File trialsIndex = new File(db.getDbName()+".trials.ndx");
@@ -552,7 +620,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setTrialsMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading trials index file: "+e.getMessage());
 			} 
 		}
 		File patientsIndex = new File(db.getDbName()+".patients.ndx");
@@ -562,7 +630,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setPatientsMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading patients index file: "+e.getMessage());
 			} 
 		}
 		File dosage_mgIndex = new File(db.getDbName()+".dosage_mg.ndx");
@@ -572,7 +640,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setDosageMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading dosage_mg index file: "+e.getMessage());
 			} 
 		}
 		File readingIndex = new File(db.getDbName()+".reading.ndx");
@@ -582,7 +650,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setReadingMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading reading index file: "+e.getMessage());
 			} 
 		}
 		File double_blindIndex = new File(db.getDbName()+".double_blind.ndx");
@@ -592,17 +660,17 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setDoubleBlindMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading double_blind index file: "+e.getMessage());
 			} 
 		}
-		File controlled_studyIndex = new File(db.getDbName()+".contolled_study.ndx");
+		File controlled_studyIndex = new File(db.getDbName()+".controlled_study.ndx");
 		if(controlled_studyIndex.exists()){
 			try(ObjectInputStream ois = new ObjectInputStream(new FileInputStream(controlled_studyIndex))) {
 				Object obj = ois.readObject();
 				if(obj instanceof TreeMap<?,?>)
 					db.setControlledStudyMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading controlled_study index file: "+e.getMessage());
 			} 
 		}
 		File govt_fundedIndex = new File(db.getDbName()+".govt_funded.ndx");
@@ -612,7 +680,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setGovt_fundedMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading govt_funded index file: "+e.getMessage());
 			} 
 		}
 		File fda_approvedIndex = new File(db.getDbName()+".fda_approved.ndx");
@@ -622,7 +690,7 @@ public class CLIController {
 				if(obj instanceof TreeMap<?,?>)
 					db.setFda_approvedMap((TreeMap<Float, ArrayList<Long>>)obj);
 			} catch (IOException | ClassNotFoundException e) {
-				e.printStackTrace();
+				System.err.println("Error while reading fda_approved index file: "+e.getMessage());
 			} 
 		}
 	}
@@ -637,8 +705,8 @@ public class CLIController {
 
     }
 
-	private Database getDatabase(String dbName) {
-		for (Database database : dbList) {
+	private PharmaDatabase getDatabase(String dbName) {
+		for (PharmaDatabase database : dbList) {
 			if(database.getDbName().equalsIgnoreCase(dbName))
 				return database;
 		}
@@ -646,11 +714,17 @@ public class CLIController {
 	}
 
 	private String formatLine(String line) {
-		if(line.startsWith("insert")||line.startsWith("INSERT")){
+		line = line.trim();
+		if(line.toLowerCase().startsWith("insert")){
 			int index = line.indexOf("(");
 			String firstPart = line.substring(0, index).toLowerCase();
 			String secondPart = line.substring(index);
 			return firstPart+secondPart;
+		}
+		if(line.toLowerCase().startsWith("import")){
+			String importPart = line.substring(0, 7).toLowerCase();
+			String secondPart = line.substring(7);
+			return importPart+secondPart;
 		}
 		return line.toLowerCase();
 	}

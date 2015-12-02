@@ -9,7 +9,7 @@ public class MyDatabase {
 		try {
 			cli.startCLI();
 		} catch (IOException e) {
-			e.printStackTrace();
+			System.err.println("IOException while executing the program: "+e.getMessage());
 		}
 	}
 
