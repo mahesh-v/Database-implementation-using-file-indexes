@@ -20,7 +20,7 @@ import data.WhereClause;
 import data.PharmaDatabase;
 
 public class CLIController {
-	private static final String PROMPT_STRING = "MXV142030_prompt> ";
+	private static final String PROMPT_STRING = "prompt> ";
 	private static final String ENCODING = "UTF-8";
 	private static final String BINARY_EXTENSION = ".db";
 	boolean shutDown;
